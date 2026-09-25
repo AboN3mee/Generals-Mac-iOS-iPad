@@ -32,6 +32,11 @@ jobs:
           chmod +x scripts/build/ios/*.sh
           bash ./scripts/build/ios/fetch-moltenvk.sh
           bash ./scripts/build/ios/stage-fonts.sh
+          # نسخ مكتبة MoltenVK إلى المسارات المتوقعة للمشروع
+          mkdir -p lib
+          sudo mkdir -p /lib
+          find . -name "MoltenVK.xcframework" -exec cp -r {} lib/ \; 2>/dev/null || true
+          find . -name "MoltenVK.xcframework" -exec sudo cp -r {} /lib/ \; 2>/dev/null || true
 
       - name: Download Game Assets
         run: |
