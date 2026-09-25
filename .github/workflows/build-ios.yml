@@ -19,7 +19,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install cmake ninja meson pkgconf xcodegen p7zip
+          brew install cmake ninja meson pkgconf xcodegen p7zip glslang
 
       - name: Setup vcpkg
         run: |
