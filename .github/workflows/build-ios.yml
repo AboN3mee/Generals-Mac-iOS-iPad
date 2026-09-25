@@ -33,14 +33,12 @@ jobs:
           bash ./scripts/build/ios/fetch-moltenvk.sh
           bash ./scripts/build/ios/stage-fonts.sh
 
-          # إنشاء مسار VULKAN_SDK وتأمين كافة الملفات المطلوبة
           mkdir -p $HOME/vulkan_sdk/lib
           MOLTEN_PATH=$(find $HOME . -name "MoltenVK.xcframework" -type d 2>/dev/null | head -n 1)
           if [ -n "$MOLTEN_PATH" ]; then
             cp -r "$MOLTEN_PATH" $HOME/vulkan_sdk/lib/
           fi
 
-          # تجهيز الملف بالاسم والمسار الذي يطلبه Ninja بالظبط
           ARM_DIR="$HOME/vulkan_sdk/lib/MoltenVK.xcframework/ios-arm64"
           mkdir -p "$ARM_DIR"
           find "$ARM_DIR" -name "MoltenVK*" -exec cp {} "$ARM_DIR/libMoltenVK.a" \; 2>/dev/null || true
@@ -61,8 +59,24 @@ jobs:
       - name: Package IPA
         run: |
           mkdir -p Payload
-          cp -r build/ios-vulkan/GeneralsZH.app Payload/ || cp -r build/ios-vulkan/Release-iphoneos/GeneralsZH.app Payload/ || true
-          cp -r game_assets/* Payload/GeneralsZH.app/ || true
+          
+          # البحث الديناميكي عن مجلد الـ .app الناتج من البناء
+          BUILT_APP=$(find build/ios-vulkan -name "*.app" -type d | head -n 1)
+          
+          if [ -z "$BUILT_APP" ]; then
+            echo "Error: No .app bundle found!"
+            exit 1
+          fi
+          
+          echo "Found built app at: $BUILT_APP"
+          cp -r "$BUILT_APP" Payload/
+          
+          # نسخ ملفات وأصول اللعبة إلى داخل حزمة التطبيق
+          TARGET_APP=$(find Payload -name "*.app" -type d | head -n 1)
+          if [ -d "game_assets" ]; then
+            cp -r game_assets/* "$TARGET_APP/" || true
+          fi
+          
           zip -r Generals_Zero_Hour.ipa Payload
 
       - name: Upload IPA Artifact
