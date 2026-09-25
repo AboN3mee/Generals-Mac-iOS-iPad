@@ -13,14 +13,25 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Select Xcode Version
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
       - name: Install dependencies
         run: |
           brew install cmake ninja meson pkgconf xcodegen p7zip
 
+      - name: Setup vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git $HOME/vcpkg
+          $HOME/vcpkg/bootstrap-vcpkg.sh
+          echo "VCPKG_ROOT=$HOME/vcpkg" >> $GITHUB_ENV
+
       - name: Fetch MoltenVK and Stage Fonts
         run: |
-          ./scripts/build/ios/fetch-moltenvk.sh
-          ./scripts/build/ios/stage-fonts.sh
+          chmod +x scripts/build/ios/*.sh
+          bash ./scripts/build/ios/fetch-moltenvk.sh
+          bash ./scripts/build/ios/stage-fonts.sh
 
       - name: Download Game Assets
         run: |
