@@ -1,0 +1,47 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          brew install cmake ninja meson pkgconf xcodegen p7zip
+
+      - name: Fetch MoltenVK and Stage Fonts
+        run: |
+          ./scripts/build/ios/fetch-moltenvk.sh
+          ./scripts/build/ios/stage-fonts.sh
+
+      - name: Download Game Assets
+        run: |
+          curl -L -o assets.7z "https://github.com/AboN3mee/Generals-Mac-iOS-iPad/releases/download/v1.0/Command.Conquer.Generals.Zero.Hour.7z"
+          mkdir -p game_assets
+          7z x assets.7z -ogame_assets
+
+      - name: Configure and Build
+        run: |
+          cmake --preset ios-vulkan
+          cmake --build build/ios-vulkan --target z_generals
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -r build/ios-vulkan/GeneralsZH.app Payload/ || cp -r build/ios-vulkan/Release-iphoneos/GeneralsZH.app Payload/ || true
+          cp -r game_assets/* Payload/GeneralsZH.app/ || true
+          zip -r Generals_Zero_Hour.ipa Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Generals_Zero_Hour_IPA
+          path: Generals_Zero_Hour.ipa
