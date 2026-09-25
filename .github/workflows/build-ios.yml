@@ -32,10 +32,20 @@ jobs:
           chmod +x scripts/build/ios/*.sh
           bash ./scripts/build/ios/fetch-moltenvk.sh
           bash ./scripts/build/ios/stage-fonts.sh
-          # نسخ مكتبة MoltenVK إلى مجلد العمل المحلي داخل المشروع
-          mkdir -p lib
-          find $HOME/GeneralsX -name "MoltenVK.xcframework" -exec cp -r {} lib/ \; 2>/dev/null || find . -name "MoltenVK.xcframework" -exec cp -r {} lib/ \; 2>/dev/null || true
-          echo "MOLTENVK_DIR=${GITHUB_WORKSPACE}" >> $GITHUB_ENV
+
+          # إنشاء مسار VULKAN_SDK وتأمين كافة الملفات المطلوبة
+          mkdir -p $HOME/vulkan_sdk/lib
+          MOLTEN_PATH=$(find $HOME . -name "MoltenVK.xcframework" -type d 2>/dev/null | head -n 1)
+          if [ -n "$MOLTEN_PATH" ]; then
+            cp -r "$MOLTEN_PATH" $HOME/vulkan_sdk/lib/
+          fi
+
+          # تجهيز الملف بالاسم والمسار الذي يطلبه Ninja بالظبط
+          ARM_DIR="$HOME/vulkan_sdk/lib/MoltenVK.xcframework/ios-arm64"
+          mkdir -p "$ARM_DIR"
+          find "$ARM_DIR" -name "MoltenVK*" -exec cp {} "$ARM_DIR/libMoltenVK.a" \; 2>/dev/null || true
+
+          echo "VULKAN_SDK=$HOME/vulkan_sdk" >> $GITHUB_ENV
 
       - name: Download Game Assets
         run: |
@@ -45,7 +55,7 @@ jobs:
 
       - name: Configure and Build
         run: |
-          cmake --preset ios-vulkan -DMOLTENVK_DIR="${GITHUB_WORKSPACE}"
+          cmake --preset ios-vulkan
           cmake --build build/ios-vulkan --target z_generals
 
       - name: Package IPA
