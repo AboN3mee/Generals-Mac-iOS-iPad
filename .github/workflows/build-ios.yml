@@ -1,21 +1,20 @@
-name: Build iOS IPA
+name: Build Generals Zero Hour iOS
 
 on:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-ios:
     runs-on: macos-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Select Xcode Version
-        run: |
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
       - name: Install dependencies
         run: |
@@ -23,129 +22,71 @@ jobs:
 
       - name: Setup vcpkg
         run: |
-          git clone https://github.com/microsoft/vcpkg.git $HOME/vcpkg
-          $HOME/vcpkg/bootstrap-vcpkg.sh
-          echo "VCPKG_ROOT=$HOME/vcpkg" >> $GITHUB_ENV
+          git clone https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
+          "$HOME/vcpkg/bootstrap-vcpkg.sh"
+          echo "VCPKG_ROOT=$HOME/vcpkg" >> "$GITHUB_ENV"
 
-      - name: Fetch MoltenVK and Stage Fonts
+      - name: Fetch MoltenVK
         run: |
           chmod +x scripts/build/ios/*.sh
-          bash ./scripts/build/ios/fetch-moltenvk.sh
-          bash ./scripts/build/ios/stage-fonts.sh
+          ./scripts/build/ios/fetch-moltenvk.sh
 
-          mkdir -p $HOME/vulkan_sdk/lib
-          MOLTEN_PATH=$(find $HOME . -name "MoltenVK.xcframework" -type d 2>/dev/null | head -n 1)
-          if [ -n "$MOLTEN_PATH" ]; then
-            cp -r "$MOLTEN_PATH" $HOME/vulkan_sdk/lib/
-          fi
-
-          ARM_DIR="$HOME/vulkan_sdk/lib/MoltenVK.xcframework/ios-arm64"
-          mkdir -p "$ARM_DIR"
-          find "$ARM_DIR" -name "MoltenVK*" -exec cp {} "$ARM_DIR/libMoltenVK.a" \; 2>/dev/null || true
-
-          echo "VULKAN_SDK=$HOME/vulkan_sdk" >> $GITHUB_ENV
-
-      - name: Download Game Assets
+      - name: Stage fonts
         run: |
-          curl -L -o assets.7z "https://github.com/AboN3mee/Generals-Mac-iOS-iPad/releases/download/v1.0/Command.Conquer.Generals.Zero.Hour.7z"
-          mkdir -p game_assets
-          7z x assets.7z -ogame_assets
+          ./scripts/build/ios/stage-fonts.sh
 
-      - name: Configure and Build
+      - name: Configure
         run: |
           cmake --preset ios-vulkan
-          cmake --build build/ios-vulkan --target z_generals
 
-      - name: Package IPA
+      - name: Build Generals
         run: |
+          cmake \
+            --build build/ios-vulkan \
+            --target z_generals \
+            --parallel 3
+
+      - name: Check build
+        run: |
+          echo "Searching for GeneralsXZH..."
+          find build/ios-vulkan \
+            -name "GeneralsXZH" \
+            -type f \
+            -print
+
+      - name: Prepare unsigned IPA
+        run: |
+          set -e
+
+          APP=$(find build/ios-vulkan \
+            -name "*.app" \
+            -type d \
+            | head -n 1)
+
+          if [ -z "$APP" ]; then
+            echo "ERROR: No .app found"
+            exit 1
+          fi
+
+          echo "Found app:"
+          echo "$APP"
+
+          rm -rf Payload
           mkdir -p Payload
 
-          BUILT_APP=$(find build/ios-vulkan -name "*.app" -type d | head -n 1)
-          if [ -z "$BUILT_APP" ]; then
-            echo "Error: No .app bundle found!"
-            exit 1
-          fi
+          cp -R "$APP" Payload/GeneralsXZH.app
 
-          cp -r "$BUILT_APP" Payload/
-          TARGET_APP=$(find Payload -name "*.app" -type d | head -n 1)
-          chmod +x "$TARGET_APP/GeneralsXZH"
+          echo "Creating IPA..."
 
-          cat << 'EOF' > "$TARGET_APP/Info.plist"
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
-    <key>CFBundleExecutable</key>
-    <string>GeneralsXZH</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.abon3mee.generalszh</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>GeneralsZH</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>LSRequiresIPhoneOS</key>
-    <true/>
-    <key>MinimumOSVersion</key>
-    <string>16.0</string>
-    <key>UIDeviceFamily</key>
-    <array>
-        <integer>1</integer>
-        <integer>2</integer>
-    </array>
-</dict>
-</plist>
-EOF
+          zip -r -y Generals_Zero_Hour.ipa Payload
 
-          mkdir -p "$TARGET_APP/Frameworks"
-          for lib in \
-            build/ios-vulkan/_deps/dxvk-build-macos/src/d3d8/libdxvk_d3d8.0.dylib \
-            build/ios-vulkan/_deps/dxvk-build-macos/src/d3d9/libdxvk_d3d9.0.dylib \
-            build/ios-vulkan/_deps/sdl3-build/libSDL3.0.dylib \
-            build/ios-vulkan/_deps/sdl3_image-build/libSDL3_image.0.dylib \
-            build/ios-vulkan/_deps/openal_soft-build/libopenal.1.24.2.dylib; do
-            if [ -f "$lib" ]; then
-              cp "$lib" "$TARGET_APP/Frameworks/"
-            else
-              echo "Error: required library missing: $lib"
-              exit 1
-            fi
-          done
-          mv "$TARGET_APP/Frameworks/libopenal.1.24.2.dylib" "$TARGET_APP/Frameworks/libopenal.1.dylib"
-          [ -f build/ios-vulkan/libgamespy.dylib ] && cp build/ios-vulkan/libgamespy.dylib "$TARGET_APP/Frameworks/"
+          echo "IPA created:"
+          ls -lh Generals_Zero_Hour.ipa
 
-          MVK_FRAMEWORK="$HOME/GeneralsX/MoltenVK/MoltenVK/MoltenVK/dynamic/MoltenVK.xcframework/ios-arm64/MoltenVK.framework"
-          if [ -d "$MVK_FRAMEWORK" ]; then
-            cp -R "$MVK_FRAMEWORK" "$TARGET_APP/Frameworks/"
-          else
-            echo "Error: MoltenVK.framework not found at $MVK_FRAMEWORK"
-            exit 1
-          fi
-
-          install_name_tool -add_rpath "@executable_path/Frameworks" "$TARGET_APP/GeneralsXZH" 2>/dev/null || true
-
-          mkdir -p "$TARGET_APP/GameData"
-          if [ -d "game_assets" ]; then
-            cp -r game_assets/* "$TARGET_APP/GameData/" || true
-          fi
-          if [ -d "$HOME/GeneralsX/ios-staging/fonts" ]; then
-            mkdir -p "$TARGET_APP/GameData/fonts"
-            cp "$HOME/GeneralsX/ios-staging/fonts"/*.ttf "$TARGET_APP/GameData/fonts/"
-          fi
-          cp ios/config/dxvk.conf "$TARGET_APP/GameData/dxvk.conf" || true
-          cp ios/config/Options.ini "$TARGET_APP/GameData/DefaultOptions.ini" || true
-
-          zip -ry Generals_Zero_Hour.ipa Payload
-
-      - name: Upload IPA Artifact
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Generals_Zero_Hour_IPA
+          name: Generals-Zero-Hour-IPA
           path: Generals_Zero_Hour.ipa
+          if-no-files-found: error
+          retention-days: 7
