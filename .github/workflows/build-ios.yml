@@ -11,10 +11,12 @@ jobs:
     runs-on: macos-latest
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Install dependencies
         run: |
@@ -27,34 +29,164 @@ jobs:
           echo "VCPKG_ROOT=$HOME/vcpkg" >> "$GITHUB_ENV"
 
       - name: Fetch MoltenVK
+        shell: bash
         run: |
+          set -e
+
           chmod +x scripts/build/ios/*.sh
+
           ./scripts/build/ios/fetch-moltenvk.sh
 
-      - name: Stage fonts
+          echo "===== Searching for MoltenVK ====="
+
+          find "$HOME/GeneralsX/MoltenVK" \
+            -name "MoltenVK.xcframework" \
+            -type d \
+            -print
+
+      - name: Setup Vulkan SDK
+        shell: bash
         run: |
+          set -e
+
+          MVK_ROOT="$HOME/GeneralsX/MoltenVK/MoltenVK/MoltenVK"
+
+          if [ ! -d "$MVK_ROOT" ]; then
+            echo "ERROR: MoltenVK root not found:"
+            echo "$MVK_ROOT"
+            exit 1
+          fi
+
+          echo "MoltenVK root:"
+          echo "$MVK_ROOT"
+
+          echo "===== MoltenVK contents ====="
+          find "$MVK_ROOT" -maxdepth 4 -type f | head -100
+
+          # Create the Vulkan SDK structure expected by CMake
+          mkdir -p "$HOME/vulkan_sdk/lib"
+
+          # Copy the MoltenVK xcframework
+          if [ -d "$MVK_ROOT/dynamic/MoltenVK.xcframework" ]; then
+            cp -R \
+              "$MVK_ROOT/dynamic/MoltenVK.xcframework" \
+              "$HOME/vulkan_sdk/lib/"
+          elif [ -d "$MVK_ROOT/static/MoltenVK.xcframework" ]; then
+            cp -R \
+              "$MVK_ROOT/static/MoltenVK.xcframework" \
+              "$HOME/vulkan_sdk/lib/"
+          else
+            echo "ERROR: MoltenVK.xcframework not found."
+            exit 1
+          fi
+
+          # Locate the iOS arm64 library
+          MVK_LIB=$(find "$HOME/vulkan_sdk/lib/MoltenVK.xcframework" \
+            -path "*/ios-arm64/libMoltenVK.a" \
+            -type f \
+            | head -n 1)
+
+          if [ -z "$MVK_LIB" ]; then
+            echo "ERROR: libMoltenVK.a not found."
+
+            echo "Available files:"
+            find "$HOME/vulkan_sdk/lib/MoltenVK.xcframework" \
+              -type f \
+              -print
+
+            exit 1
+          fi
+
+          echo "Found MoltenVK library:"
+          echo "$MVK_LIB"
+
+          # CMake expects exactly this path
+          EXPECTED="$HOME/vulkan_sdk/lib/MoltenVK.xcframework/ios-arm64"
+
+          mkdir -p "$EXPECTED"
+
+          if [ "$MVK_LIB" != "$EXPECTED/libMoltenVK.a" ]; then
+            cp "$MVK_LIB" "$EXPECTED/libMoltenVK.a"
+          fi
+
+          # Find headers
+          MVK_INCLUDE=$(find "$MVK_ROOT" \
+            -type d \
+            -name "include" \
+            | head -n 1 || true)
+
+          if [ -n "$MVK_INCLUDE" ]; then
+            ln -sfn "$MVK_INCLUDE" "$HOME/vulkan_sdk/include"
+          else
+            mkdir -p "$HOME/vulkan_sdk/include"
+          fi
+
+          echo "VULKAN_SDK=$HOME/vulkan_sdk" >> "$GITHUB_ENV"
+
+          echo "===== Vulkan SDK ====="
+          echo "VULKAN_SDK=$HOME/vulkan_sdk"
+
+          echo "===== Final MoltenVK library ====="
+          ls -lh \
+            "$HOME/vulkan_sdk/lib/MoltenVK.xcframework/ios-arm64/libMoltenVK.a"
+
+      - name: Stage fonts
+        shell: bash
+        run: |
+          set -e
+
           ./scripts/build/ios/stage-fonts.sh
 
-      - name: Configure
+      - name: Check environment
+        shell: bash
         run: |
+          set -e
+
+          echo "VULKAN_SDK=$VULKAN_SDK"
+
+          test -f \
+            "$VULKAN_SDK/lib/MoltenVK.xcframework/ios-arm64/libMoltenVK.a"
+
+          echo "MoltenVK library exists."
+
+      - name: Configure CMake
+        shell: bash
+        run: |
+          set -e
+
           cmake --preset ios-vulkan
 
       - name: Build Generals
+        shell: bash
         run: |
+          set -e
+
           cmake \
             --build build/ios-vulkan \
             --target z_generals \
             --parallel 3
 
       - name: Check build
+        shell: bash
         run: |
-          echo "Searching for GeneralsXZH..."
+          set -e
+
+          echo "===== Searching for GeneralsXZH ====="
+
           find build/ios-vulkan \
             -name "GeneralsXZH" \
             -type f \
             -print
 
+          echo "===== Searching for APP ====="
+
+          find build/ios-vulkan \
+            -name "*.app" \
+            -type d \
+            -print
+
       - name: Prepare unsigned IPA
+        shell: bash
         run: |
           set -e
 
@@ -64,14 +196,16 @@ jobs:
             | head -n 1)
 
           if [ -z "$APP" ]; then
-            echo "ERROR: No .app found"
+            echo "ERROR: No .app found."
             exit 1
           fi
 
-          echo "Found app:"
+          echo "Found application:"
           echo "$APP"
 
           rm -rf Payload
+          rm -f Generals_Zero_Hour.ipa
+
           mkdir -p Payload
 
           cp -R "$APP" Payload/GeneralsXZH.app
@@ -80,7 +214,8 @@ jobs:
 
           zip -r -y Generals_Zero_Hour.ipa Payload
 
-          echo "IPA created:"
+          echo "===== IPA ====="
+
           ls -lh Generals_Zero_Hour.ipa
 
       - name: Upload IPA
