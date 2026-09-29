@@ -1,4 +1,4 @@
-name: Build Generals Zero Hour iOS
+name: Build iOS IPA
 
 on:
   workflow_dispatch:
@@ -11,12 +11,10 @@ jobs:
     runs-on: macos-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 0
 
       - name: Install dependencies
         run: |
@@ -32,17 +30,10 @@ jobs:
         shell: bash
         run: |
           set -e
-
           chmod +x scripts/build/ios/*.sh
-
           ./scripts/build/ios/fetch-moltenvk.sh
-
           echo "===== Searching for MoltenVK ====="
-
-          find "$HOME/GeneralsX/MoltenVK" \
-            -name "MoltenVK.xcframework" \
-            -type d \
-            -print
+          find "$HOME/GeneralsX/MoltenVK" -name "MoltenVK.xcframework" -type d -print
 
       - name: Setup Vulkan SDK
         shell: bash
@@ -51,70 +42,25 @@ jobs:
 
           MVK_ROOT="$HOME/GeneralsX/MoltenVK/MoltenVK/MoltenVK"
 
-          if [ ! -d "$MVK_ROOT" ]; then
-            echo "ERROR: MoltenVK root not found:"
-            echo "$MVK_ROOT"
+          if [ ! -d "$MVK_ROOT/static/MoltenVK.xcframework" ]; then
+            echo "ERROR: static MoltenVK.xcframework not found at:"
+            echo "$MVK_ROOT/static/MoltenVK.xcframework"
+            echo "Contents of MVK_ROOT:"
+            find "$MVK_ROOT" -maxdepth 3 -type d
             exit 1
           fi
 
-          echo "MoltenVK root:"
-          echo "$MVK_ROOT"
-
-          echo "===== MoltenVK contents ====="
-          find "$MVK_ROOT" -maxdepth 4 -type f | head -100
-
-          # Create the Vulkan SDK structure expected by CMake
           mkdir -p "$HOME/vulkan_sdk/lib"
 
-          # Copy the MoltenVK xcframework
-          if [ -d "$MVK_ROOT/dynamic/MoltenVK.xcframework" ]; then
-            cp -R \
-              "$MVK_ROOT/dynamic/MoltenVK.xcframework" \
-              "$HOME/vulkan_sdk/lib/"
-          elif [ -d "$MVK_ROOT/static/MoltenVK.xcframework" ]; then
-            cp -R \
-              "$MVK_ROOT/static/MoltenVK.xcframework" \
-              "$HOME/vulkan_sdk/lib/"
-          else
-            echo "ERROR: MoltenVK.xcframework not found."
+          cp -R "$MVK_ROOT/static/MoltenVK.xcframework" "$HOME/vulkan_sdk/lib/"
+
+          if [ ! -f "$HOME/vulkan_sdk/lib/MoltenVK.xcframework/ios-arm64/libMoltenVK.a" ]; then
+            echo "ERROR: libMoltenVK.a missing after copy."
+            find "$HOME/vulkan_sdk/lib/MoltenVK.xcframework" -type f
             exit 1
           fi
 
-          # Locate the iOS arm64 library
-          MVK_LIB=$(find "$HOME/vulkan_sdk/lib/MoltenVK.xcframework" \
-            -path "*/ios-arm64/libMoltenVK.a" \
-            -type f \
-            | head -n 1)
-
-          if [ -z "$MVK_LIB" ]; then
-            echo "ERROR: libMoltenVK.a not found."
-
-            echo "Available files:"
-            find "$HOME/vulkan_sdk/lib/MoltenVK.xcframework" \
-              -type f \
-              -print
-
-            exit 1
-          fi
-
-          echo "Found MoltenVK library:"
-          echo "$MVK_LIB"
-
-          # CMake expects exactly this path
-          EXPECTED="$HOME/vulkan_sdk/lib/MoltenVK.xcframework/ios-arm64"
-
-          mkdir -p "$EXPECTED"
-
-          if [ "$MVK_LIB" != "$EXPECTED/libMoltenVK.a" ]; then
-            cp "$MVK_LIB" "$EXPECTED/libMoltenVK.a"
-          fi
-
-          # Find headers
-          MVK_INCLUDE=$(find "$MVK_ROOT" \
-            -type d \
-            -name "include" \
-            | head -n 1 || true)
-
+          MVK_INCLUDE=$(find "$MVK_ROOT" -maxdepth 2 -type d -name "include" | head -n 1 || true)
           if [ -n "$MVK_INCLUDE" ]; then
             ln -sfn "$MVK_INCLUDE" "$HOME/vulkan_sdk/include"
           else
@@ -123,99 +69,133 @@ jobs:
 
           echo "VULKAN_SDK=$HOME/vulkan_sdk" >> "$GITHUB_ENV"
 
-          echo "===== Vulkan SDK ====="
-          echo "VULKAN_SDK=$HOME/vulkan_sdk"
-
-          echo "===== Final MoltenVK library ====="
-          ls -lh \
-            "$HOME/vulkan_sdk/lib/MoltenVK.xcframework/ios-arm64/libMoltenVK.a"
+          echo "===== Vulkan SDK ready ====="
+          ls -lh "$HOME/vulkan_sdk/lib/MoltenVK.xcframework/ios-arm64/libMoltenVK.a"
 
       - name: Stage fonts
         shell: bash
         run: |
           set -e
-
           ./scripts/build/ios/stage-fonts.sh
 
       - name: Check environment
         shell: bash
         run: |
           set -e
-
           echo "VULKAN_SDK=$VULKAN_SDK"
-
-          test -f \
-            "$VULKAN_SDK/lib/MoltenVK.xcframework/ios-arm64/libMoltenVK.a"
-
-          echo "MoltenVK library exists."
+          test -f "$VULKAN_SDK/lib/MoltenVK.xcframework/ios-arm64/libMoltenVK.a"
+          echo "MoltenVK static library exists."
 
       - name: Configure CMake
         shell: bash
         run: |
           set -e
-
           cmake --preset ios-vulkan
 
       - name: Build Generals
         shell: bash
         run: |
           set -e
-
-          cmake \
-            --build build/ios-vulkan \
-            --target z_generals \
-            --parallel 3
+          cmake --build build/ios-vulkan --target z_generals --parallel 3
 
       - name: Check build
         shell: bash
         run: |
           set -e
-
           echo "===== Searching for GeneralsXZH ====="
-
-          find build/ios-vulkan \
-            -name "GeneralsXZH" \
-            -type f \
-            -print
-
+          find build/ios-vulkan -name "GeneralsXZH" -type f -print
           echo "===== Searching for APP ====="
+          find build/ios-vulkan -name "*.app" -type d -print
 
-          find build/ios-vulkan \
-            -name "*.app" \
-            -type d \
-            -print
-
-      - name: Prepare unsigned IPA
+      - name: Package IPA
         shell: bash
         run: |
           set -e
+          mkdir -p Payload
 
-          APP=$(find build/ios-vulkan \
-            -name "*.app" \
-            -type d \
-            | head -n 1)
-
-          if [ -z "$APP" ]; then
-            echo "ERROR: No .app found."
+          BUILT_APP=$(find build/ios-vulkan -name "*.app" -type d | head -n 1)
+          if [ -z "$BUILT_APP" ]; then
+            echo "Error: No .app bundle found!"
             exit 1
           fi
 
-          echo "Found application:"
-          echo "$APP"
+          cp -r "$BUILT_APP" Payload/
+          TARGET_APP=$(find Payload -name "*.app" -type d | head -n 1)
+          chmod +x "$TARGET_APP/GeneralsXZH"
 
-          rm -rf Payload
-          rm -f Generals_Zero_Hour.ipa
+          printf '%s\n' \
+            '<?xml version="1.0" encoding="UTF-8"?>' \
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+            '<plist version="1.0">' \
+            '<dict>' \
+            '    <key>CFBundleDevelopmentRegion</key>' \
+            '    <string>en</string>' \
+            '    <key>CFBundleExecutable</key>' \
+            '    <string>GeneralsXZH</string>' \
+            '    <key>CFBundleIdentifier</key>' \
+            '    <string>com.abon3mee.generalszh</string>' \
+            '    <key>CFBundleInfoDictionaryVersion</key>' \
+            '    <string>6.0</string>' \
+            '    <key>CFBundleName</key>' \
+            '    <string>GeneralsZH</string>' \
+            '    <key>CFBundlePackageType</key>' \
+            '    <string>APPL</string>' \
+            '    <key>CFBundleShortVersionString</key>' \
+            '    <string>1.0</string>' \
+            '    <key>CFBundleVersion</key>' \
+            '    <string>1</string>' \
+            '    <key>LSRequiresIPhoneOS</key>' \
+            '    <true/>' \
+            '    <key>MinimumOSVersion</key>' \
+            '    <string>16.0</string>' \
+            '    <key>UIDeviceFamily</key>' \
+            '    <array>' \
+            '        <integer>1</integer>' \
+            '        <integer>2</integer>' \
+            '    </array>' \
+            '</dict>' \
+            '</plist>' \
+            > "$TARGET_APP/Info.plist"
 
-          mkdir -p Payload
+          mkdir -p "$TARGET_APP/Frameworks"
+          for lib in \
+            build/ios-vulkan/_deps/dxvk-build-macos/src/d3d8/libdxvk_d3d8.0.dylib \
+            build/ios-vulkan/_deps/dxvk-build-macos/src/d3d9/libdxvk_d3d9.0.dylib \
+            build/ios-vulkan/_deps/sdl3-build/libSDL3.0.dylib \
+            build/ios-vulkan/_deps/sdl3_image-build/libSDL3_image.0.dylib \
+            build/ios-vulkan/_deps/openal_soft-build/libopenal.1.24.2.dylib; do
+            if [ -f "$lib" ]; then
+              cp "$lib" "$TARGET_APP/Frameworks/"
+            else
+              echo "Error: required library missing: $lib"
+              exit 1
+            fi
+          done
+          mv "$TARGET_APP/Frameworks/libopenal.1.24.2.dylib" "$TARGET_APP/Frameworks/libopenal.1.dylib"
+          [ -f build/ios-vulkan/libgamespy.dylib ] && cp build/ios-vulkan/libgamespy.dylib "$TARGET_APP/Frameworks/"
 
-          cp -R "$APP" Payload/GeneralsXZH.app
+          MVK_FRAMEWORK="$HOME/GeneralsX/MoltenVK/MoltenVK/MoltenVK/dynamic/MoltenVK.xcframework/ios-arm64/MoltenVK.framework"
+          if [ -d "$MVK_FRAMEWORK" ]; then
+            cp -R "$MVK_FRAMEWORK" "$TARGET_APP/Frameworks/"
+          else
+            echo "Error: MoltenVK.framework (dynamic) not found at $MVK_FRAMEWORK"
+            exit 1
+          fi
 
-          echo "Creating IPA..."
+          install_name_tool -add_rpath "@executable_path/Frameworks" "$TARGET_APP/GeneralsXZH" 2>/dev/null || true
 
-          zip -r -y Generals_Zero_Hour.ipa Payload
+          mkdir -p "$TARGET_APP/GameData"
+          if [ -d "game_assets" ]; then
+            cp -r game_assets/* "$TARGET_APP/GameData/" || true
+          fi
+          if [ -d "$HOME/GeneralsX/ios-staging/fonts" ]; then
+            mkdir -p "$TARGET_APP/GameData/fonts"
+            cp "$HOME/GeneralsX/ios-staging/fonts"/*.ttf "$TARGET_APP/GameData/fonts/"
+          fi
+          cp ios/config/dxvk.conf "$TARGET_APP/GameData/dxvk.conf" || true
+          cp ios/config/Options.ini "$TARGET_APP/GameData/DefaultOptions.ini" || true
 
-          echo "===== IPA ====="
-
+          zip -ry Generals_Zero_Hour.ipa Payload
           ls -lh Generals_Zero_Hour.ipa
 
       - name: Upload IPA
